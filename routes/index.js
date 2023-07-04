@@ -2,8 +2,12 @@ const express = require("express");
 const router = express.Router();
 const passport = require("passport");
 const bcrypt = require("bcrypt");
+const moment = require('moment');
+require('dotenv').config();
+const { google } = require ("googleapis")
 const { readData, writeData } = require("../filestorage");
-
+const { JWT } = require('google-auth-library');
+const { GoogleApis } = require("googleapis");
 let users = [];
 
 // Carregar os dados dos usuários do MongoDB
@@ -90,14 +94,7 @@ router.post("/cadastro", async (req, res) => {
 router.get("/", function (req, res) {
   res.render("views/index");
 });
-router.get("/main", (req, res) => {
-  if (userProfile) {
-    // Verifique se o usuário está autenticado
-    res.render("views/main", { user: userProfile }); // Renderiza a view 'success' e passa o perfil do usuário
-  } else {
-    res.redirect("/"); // Se o usuário não estiver autenticado, redireciona para a página inicial
-  }
-});
+
 
 //app.get('/main', (req, res) => res.send(userProfile));
 router.get("/error", (req, res) => res.send("error logging in"));
@@ -108,7 +105,7 @@ router.get(
     scope: [
       "profile",
       "email",
-      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar",
     ],
   })
 );
@@ -131,17 +128,20 @@ router.get("/criartarefa", (req, res) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      process.env.CALLBACK_URL
+      process.env.CALLBACK_URL,
+      process.env.PRIVATE_KEY,
+      process.env.CALENDAR_ID,
+      process.env.KEY
     );
     oauth2Client.setCredentials({
       access_token: req.user.accessToken,
     });
-
+   
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
     calendar.events.list(
       {
-        calendarId: "primary",
+        calendarId: process.env.CALENDAR_ID,
         timeMin: new Date().toISOString(),
         maxResults: 10,
         singleEvents: true,
@@ -157,6 +157,53 @@ router.get("/criartarefa", (req, res) => {
         }
       }
     );
+  }scopes
+});
+
+router.post('/creatEvent', async (req, res) => {
+  // Extract the form data
+  const { eventTitle, eventStart, eventEnd, eventDescription } = req.body;
+
+  // Convert the date and time to the appropriate format
+  const startMoment = moment(eventStart, 'YYYY-MM-DDTHH:mm');
+  const endMoment = moment(eventEnd, 'YYYY-MM-DDTHH:mm');
+
+  const startDateTime = startMoment.toISOString();
+  const endDateTime = endMoment.toISOString();
+
+  // Create the event object
+  const event = {
+    summary: eventTitle,
+    start: {
+      dateTime: startDateTime,
+      timeZone: 'America/New_York',
+    },
+    end: {
+      dateTime: endDateTime,
+      timeZone: 'America/New_York',
+    },
+    description: eventDescription,
+  };
+
+  try {
+    // Authenticate and create the event in the calendar
+    const jwtClient = new JWT({
+      email: process.env.CLIENT_EMAIL,
+      key: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),
+      scopes: ['https://www.googleapis.com/auth/calendar'],
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: jwtClient });
+
+    const createdEvent = await calendar.events.insert({
+      auth: jwtClient,
+      calendarId: process.env.CALENDAR_ID, // Use the correct calendar ID
+      resource: event,
+      }); 
+        console.log('Tarefa criada com sucesso!');
+        res.redirect('/main'); // Redirect to the tasks page
+      } catch (error) {
+        console.error('Erro ao criar a tarefa:', error);
   }
 });
 

@@ -1,8 +1,9 @@
+require('coffee-script/register');
 require("dotenv").config();
 const express = require("express");
+const gapi = require("gapi")
 const ejs = require("ejs");
 const { google } = require("googleapis");
-const privatekey = require("./credentials.json");
 const session = require("express-session");
 const passport = require("passport");
 const LocalStrategy = require("passport-local").Strategy;
@@ -14,6 +15,7 @@ const flash = require("connect-flash");
 const path = require("path");
 const app = express();
 const routes = require("./routes/index");
+const { JWT } = require('google-auth-library');
 var userProfile;
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "./views"));
@@ -33,24 +35,20 @@ app.use(
   })
 );
 
-const jwtClient = new google.auth.JWT(
-  privatekey.client_email,
-  null,
-  privatekey.private_key,
-  ["https://www.googleapis.com/auth/calendar"]
-);
 
-app.use(passport.initialize());
 app.use(passport.session());
 
 // Configuração do Passport
 passport.use(
   new GoogleStrategy(
     {
-      scope: ["profile" + "email"],
+      client_email:process.env.CLIENT_EMAIL,
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: process.env.CALLBACK_URL,
+      private_key: process.env.PRIVATE_KEY,
+      project_number: process.env.PROJECT_ID,
+      scope: ["profile" + "email"]
     },
     function (accessToken, refreshToken, profile, cb) {
       userProfile = profile;
@@ -58,6 +56,26 @@ passport.use(
     }
   )
 );
+// Defina os escopos que precisamos acessar
+const SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"];
+
+const jwtClient = new google.auth.JWT(
+    process.env.CLIENT_EMAIL,
+  null,
+    process.env.PRIVATE_KEY,
+  SCOPES
+);
+
+const calendar = google.calendar({
+  version: "v3",
+  project: process.env.PROJECT_ID,
+  auth: jwtClient,
+});
+
+const auth = new google.auth.GoogleAuth({
+  key: process.env.PRIVATE_KEY,
+  scopes: SCOPES,
+});
 
 passport.serializeUser(function (user, done) {
   done(null, user);
@@ -73,39 +91,23 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.CALLBACK_URL
 );
 
-async function createEvent() {
-  const calendar = google.calendar({ version: "v3", auth: jwtClient });
-
-  const event = {
-    summary: "Meu Evento",
-    location: "Local do evento",
-    description: "Descrição do evento",
-    start: {
-      dateTime: "2023-06-09T09:00:00",
-      timeZone: "America/Sao_Paulo",
-    },
-    end: {
-      dateTime: "2023-06-09T17:00:00",
-      timeZone: "America/Sao_Paulo",
-    },
-  };
-
-  try {
-    const response = await calendar.events.insert({
-      calendarId: "primary",
-      resource: event,
-    });
-    console.log("Evento criado: ", response.data.htmlLink);
-  } catch (error) {
-    console.error("Erro ao criar o evento: ", error.message);
-  }
+// Função para carregar a biblioteca do Google Calendar API
+function handleClientLoad() {
+  gapi.load('client:auth2', initClient);
 }
 
-createEvent();
-
-// Defina os escopos que precisamos acessar
-const SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"];
-
+// Função para inicializar a biblioteca do Google Calendar API
+function initClient() {
+  gapi.client.init({
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    private_key: process.env.PRIVATE_KEY,
+    discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'],
+    scope: 'https://www.googleapis.com/auth/calendar.events'
+  }).then(function () {
+    // Adiciona um listener para o evento de submit do formulário
+    document.getElementById('event-form').addEventListener('submit', createEvent);
+  });
+}
 
 app.use(express.static(__dirname + "/public"));
 app.set("view engine", "ejs");
@@ -164,11 +166,13 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
+
 app.set("views", path.join(__dirname, "views"));
 app.use("/", routes);
 app.use("/main", routes);
 app.use("/tarefa", routes);
 app.use("/cadastro", routes);
+app.use("/criartarefa",routes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
